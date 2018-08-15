@@ -149,8 +149,8 @@ class CamNet(nn.Module):
 
         new_state_dict = OrderedDict()
         for k, v in state_dict.items():
-            print(k)
-            name = k[7:]  # remove `module.`
+            # print(k)
+            name = k#[7:]  # remove `module.`
             new_state_dict[name] = v
         self.load_state_dict(new_state_dict)
 

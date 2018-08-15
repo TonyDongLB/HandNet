@@ -10,7 +10,7 @@ import cv2
 
 class Hand(data.Dataset):
     # # to load the hand picture
-    def __init__(self, root, transforms=None, train=True, test=False, deploy=False):
+    def __init__(self, root, transforms=None, train=False, test=False, deploy=False):
         super(Hand, self).__init__()
         self.root = root
         self.transforms = transforms
@@ -61,7 +61,7 @@ class Hand(data.Dataset):
         flow = np.concatenate((flow, attach), 2)
 
         # # add a random flip
-        if np.random.random() > 0.5:
+        if np.random.random() > 0.5 and not self.deploy:
             img_1 = np.flip(img_1, 1).copy()
             img_2 = np.flip(img_2, 1).copy()
             flow = np.flip(flow, 1).copy()
@@ -69,12 +69,16 @@ class Hand(data.Dataset):
         img_1 = self.transforms4img(img_1)
         img_2 = self.transforms4img(img_2)
         flow = np.transpose(flow, (2, 0, 1))
-        flow = torch.from_numpy(flow)
-
-        if img_path == next_img_path:
-            label = 0
+        if self.deploy:
+            if next_img_path == img_path:
+                label = '-1'
+            else:
+                label = filename
         else:
-            label = int(img_path.split('/')[-2])
+            if img_path == next_img_path:
+                label = 0
+            else:
+                label = int(img_path.split('/')[-2])
 
         return img_1, img_2, flow, label
 

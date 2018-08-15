@@ -108,3 +108,4 @@ venv.bak/
 *.jpg
 *.pkl
 *.zip
+*.pth

@@ -12,7 +12,7 @@ from torch import optim
 from torch.utils.data import DataLoader
 from torch.autograd import Variable
 from tensorboardX import SummaryWriter
-from PIL import  Image
+from PIL import Image
 from torchvision import transforms as T
 from model import CamNet
 from dataset import Hand
@@ -62,7 +62,13 @@ def train_model(model, epochs=200, batch_size=16, lr=0.01, gpu=True,):
     #         momentum=0.9,
     #         weight_decay=0.0005)
 
-    criterion = nn.CrossEntropyLoss()
+    # # to use CEloss with weight
+    weight = torch.Tensor([1.8, 1])
+    if gpu:
+        weight = weight.cuda()
+    criterion = torch.nn.CrossEntropyLoss(weight=weight)
+    # # to use CrossEntropyLoss
+    # criterion = FocalLoss2d(gamma=2)
 
     print('''
     Starting training:
@@ -80,8 +86,6 @@ def train_model(model, epochs=200, batch_size=16, lr=0.01, gpu=True,):
         print('Starting epoch {}/{}.'.format(epoch + 1, epochs))
         epoch_loss = 0
         num_i = 0
-
-        # 修改学习率
 
         for ii, (img1, img2, flow, label) in enumerate(train_data):
             num_i += 1
@@ -123,12 +127,12 @@ def train_model(model, epochs=200, batch_size=16, lr=0.01, gpu=True,):
 
         model.train()
 
-        # #
+        # # 修改学习率
         if last_accuracy == 0:
             last_accuracy = val_accuracy
         elif val_accuracy < last_accuracy:
             for param_group in optimizer.param_groups:
-                if param_group['lr'] * 0.1 < 1e-7:
+                if param_group['lr'] * 0.1 < 1e-11:
                     break
                 param_group['lr'] = param_group['lr'] * 0.1
                 print('learn rate is ' + str(param_group['lr'] * 0.1))
