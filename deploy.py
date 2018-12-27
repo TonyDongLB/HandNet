@@ -18,7 +18,7 @@ from model import CamNet
 from dataset import Hand
 from loss import FocalLoss2d
 
-os.environ["CUDA_VISIBLE_DEVICES"]="0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 normalize = T.Normalize(mean=[0.4, 0.4, 0.4], std=[0.4, 0.4, 0.4])
 transforms4img = T.Compose([
@@ -28,38 +28,57 @@ transforms4img = T.Compose([
 
 
 def get_tensors_from_path(img_path):
+    label = None
     filename = img_path.split('/')[-1].split('.')[0]
     num = filename.split("_")[-1]
     next_num = str(int(num) + 10)
     next_img_path = img_path.replace(num, next_num)
+    before_num = str(int(num) - 10)
+    before_img_path = img_path.replace(num, before_num)
     # 不存在下一个帧
     if not os.path.exists(next_img_path):
-        return None
+        next_img_path = img_path
+    if not os.path.exists(before_img_path):
+        before_img_path = img_path
+    img_0 = cv2.imread(before_img_path)
     img_1 = cv2.imread(img_path)
     img_2 = cv2.imread(next_img_path)
+    img_0 = cv2.resize(img_0, (224, 224))
     img_1 = cv2.resize(img_1, (224, 224))
     img_2 = cv2.resize(img_2, (224, 224))
-    flow = None
-    flow = cv2.calcOpticalFlowFarneback(cv2.cvtColor(img_1, cv2.COLOR_BGR2GRAY),
-                                        cv2.cvtColor(img_2, cv2.COLOR_BGR2GRAY),
-                                        flow=flow,
-                                        pyr_scale=0.5, levels=3, winsize=15,
-                                        iterations=3, poly_n=5, poly_sigma=1.2,
-                                        flags=cv2.OPTFLOW_FARNEBACK_GAUSSIAN)
-    attach = np.zeros((flow.shape[0], flow.shape[1], 1), flow.dtype)
-    flow = np.clip(flow, -20, 20)
-    flow += 20
-    flow /= 40
-    flow = np.concatenate((flow, attach), 2)
+    flow0, flow1 = None, None
+    flow0 = cv2.calcOpticalFlowFarneback(cv2.cvtColor(img_0, cv2.COLOR_BGR2GRAY),
+                                         cv2.cvtColor(img_1, cv2.COLOR_BGR2GRAY),
+                                         flow=flow1,
+                                         pyr_scale=0.5, levels=3, winsize=15,
+                                         iterations=3, poly_n=5, poly_sigma=1.2,
+                                         flags=cv2.OPTFLOW_FARNEBACK_GAUSSIAN)
+    flow1 = cv2.calcOpticalFlowFarneback(cv2.cvtColor(img_1, cv2.COLOR_BGR2GRAY),
+                                         cv2.cvtColor(img_2, cv2.COLOR_BGR2GRAY),
+                                         flow=flow1,
+                                         pyr_scale=0.5, levels=3, winsize=15,
+                                         iterations=3, poly_n=5, poly_sigma=1.2,
+                                         flags=cv2.OPTFLOW_FARNEBACK_GAUSSIAN)
+    attach0 = np.zeros((flow0.shape[0], flow0.shape[1], 1), flow0.dtype)
+    attach1 = np.zeros((flow1.shape[0], flow1.shape[1], 1), flow1.dtype)
+    flow0 = np.clip(flow0, -40, 40)
+    flow1 = np.clip(flow1, -40, 40)
+    flow0 += 40
+    flow1 += 40
+    flow0 /= 80
+    flow1 /= 80
+    flow0 = np.concatenate((flow0, attach0), 2)
+    flow1 = np.concatenate((flow1, attach1), 2)
     img_1 = transforms4img(img_1)
-    img_2 = transforms4img(img_2)
-    flow = np.transpose(flow, (2, 0, 1))
-    flow = torch.from_numpy(flow)
+    flow0 = np.transpose(flow0, (2, 0, 1))
+    flow0 = torch.from_numpy(flow0)
+    flow1 = np.transpose(flow1, (2, 0, 1))
+    flow1 = torch.from_numpy(flow1)
     label = filename
     img_1 = torch.unsqueeze(img_1, dim=0)
-    img_2 = torch.unsqueeze(img_2, dim=0)
-    flow = torch.unsqueeze(flow, dim=0)
-    return img_1, img_2, flow, label
+    flow0 = torch.unsqueeze(flow0, dim=0)
+    flow1 = torch.unsqueeze(flow1, dim=0)
+    return img_1, flow0, flow1, label
 
 
 def deploy(model, gpu):
@@ -72,34 +91,25 @@ def deploy(model, gpu):
 
     for img_path in imgs:
         result = get_tensors_from_path(img_path)
-        if result is None:
-            img = cv2.imread(img_path)
-            filename = img_path.split('/')[-1].split('.')[0]
-            cv2.imwrite('data/deploy/0/' + filename + '_1.jpg', img)
-            continue
-        else:
-            img1, img2, flow, label = result
+
+        img1, flow0, flow1, label = result
 
         img1 = Variable(img1)
-        img2 = Variable(img2)
-        flow = Variable(flow)
+        flow0 = Variable(flow0)
+        flow1 = Variable(flow1)
 
         if gpu:
             img1 = img1.cuda()
-            img2 = img2.cuda()
-            flow = flow.cuda()
+            flow0 = flow0.cuda()
+            flow1 = flow1.cuda()
 
-        output = model(img1, img2, flow)
+        output = model(img1, flow0, flow1)
         pred = output.data.max(1)[1]
         classed = int(pred.cpu().numpy()[0])
         img1 = img1.cpu().data.squeeze(dim=0).numpy()
-        img2 = img2.cpu().data.squeeze(dim=0).numpy()
         img1 = ((img1 * 0.4) + 0.4) * 255
-        img2 = ((img2 * 0.4) + 0.4) * 255
         img1 = np.transpose(img1, (1, 2, 0))
-        img2 = np.transpose(img2, (1, 2, 0))
         img1 = img1.astype(np.uint8)
-        img2 = img2.astype(np.uint8)
         if classed == 0:
             if cv2.imwrite('data/deploy/0/' + label + '_1.jpg', img1):
                 print('Writed image {}'.format(label))
@@ -118,7 +128,7 @@ def get_args():
                       type='int', help='batch size')
     parser.add_option('-g', '--gpu', action='store_true', dest='gpu',
                       default=True, help='use cuda')
-    parser.add_option('--model', '-m', default='checkpoint/good_perform.pth',
+    parser.add_option('--model', '-m', default='checkpoint/epoch_49_1.0_1224_23:27:23.pth',
                         metavar='FILE',
                         help="Specify the file in which is stored the model"
                              " (default : 'MODEL.pth')")

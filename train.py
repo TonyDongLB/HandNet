@@ -17,6 +17,7 @@ from torchvision import transforms as T
 from model import CamNet
 from dataset import Hand
 from loss import FocalLoss2d
+from utils import *
 
 
 def train_model(model, epochs=200, batch_size=16, lr=0.01, gpu=True,):
@@ -39,8 +40,9 @@ def train_model(model, epochs=200, batch_size=16, lr=0.01, gpu=True,):
         [
             {'params': model.module.img_feature.parameters(), 'lr': 1e-2 / 2, 'weight_decay': 1e-3},
             {'params': model.module.flow_feature.parameters()},
-            {'params': model.module.fusion4img.parameters()},
             {'params': model.module.fusion4flow.parameters()},
+            {'params': model.module.reductionBy2.parameters()},
+            {'params': model.module.fusion4img.parameters()},
             {'params': model.module.layer4fusion.parameters()},
             {'params': model.module.layer4flow.parameters()},
             {'params': model.module.fc_fusion.parameters()},
@@ -87,27 +89,27 @@ def train_model(model, epochs=200, batch_size=16, lr=0.01, gpu=True,):
         epoch_loss = 0
         num_i = 0
 
-        for ii, (img1, img2, flow, label) in enumerate(train_data):
+        for ii, (img1, flow0, flow1, label) in enumerate(train_data):
             num_i += 1
             processed_batch += 1
 
             img1 = Variable(img1)
-            img2 = Variable(img2)
-            flow = Variable(flow)
+            flow0 = Variable(flow0)
+            flow1 = Variable(flow1)
             label = Variable(label).long()
 
             if gpu:
                 img1 = img1.cuda()
-                img2 = img2.cuda()
-                flow = flow.cuda()
+                flow0 = flow0.cuda()
+                flow1 = flow1.cuda()
                 label = label.cuda()
 
             optimizer.zero_grad()
 
-            pred = model(img1, img2, flow)
+            pred = model(img1, flow0, flow1)
 
             loss = criterion(pred, label)
-            epoch_loss += loss.data[0]
+            epoch_loss += loss.item()
 
             loss.backward()
             optimizer.step()
@@ -132,8 +134,8 @@ def train_model(model, epochs=200, batch_size=16, lr=0.01, gpu=True,):
             last_accuracy = val_accuracy
         elif val_accuracy < last_accuracy:
             for param_group in optimizer.param_groups:
-                if param_group['lr'] * 0.1 < 1e-11:
-                    break
+                if param_group['lr'] <= 1e-6:
+                    continue
                 param_group['lr'] = param_group['lr'] * 0.1
                 print('learn rate is ' + str(param_group['lr'] * 0.1))
         last_accuracy = val_accuracy
@@ -152,26 +154,26 @@ def eval(model, dataset, gpu=False, criterion=None):
     right = 0
     total_loss = 0
 
-    for ii, (img1, img2, flow, label) in enumerate(dataset):
+    for ii, (img1, flow0, flow1, label) in enumerate(dataset):
 
         img1 = Variable(img1)
-        img2 = Variable(img2)
-        flow = Variable(flow)
+        flow0 = Variable(flow0)
+        flow1 = Variable(flow1)
         label = Variable(label).long()
 
         if gpu:
             img1 = img1.cuda()
-            img2 = img2.cuda()
-            flow = flow.cuda()
+            flow0 = flow0.cuda()
+            flow1 = flow1.cuda()
             label = label.cuda()
 
-        score = model(img1, img2, flow)
+        score = model(img1, flow0, flow1)
 
         if criterion is not None:
-            total_loss += criterion(score, label).data[0]
+            total_loss += criterion(score, label).item()
 
         pred = score.max(1)[1]
-        right += pred.eq(label).sum().data[0]
+        right += pred.eq(label).sum().item()
 
     test_loss = total_loss / len(dataset)
     accuracy = right / len(dataset)
@@ -181,9 +183,9 @@ def eval(model, dataset, gpu=False, criterion=None):
 
 def get_args():
     parser = OptionParser()
-    parser.add_option('-e', '--epochs', dest='epochs', default=300, type='int',
+    parser.add_option('-e', '--epochs', dest='epochs', default=50, type='int',
                       help='number of epochs')
-    parser.add_option('-b', '--batch-size', dest='batchsize', default=32,
+    parser.add_option('-b', '--batch-size', dest='batchsize', default=48,
                       type='int', help='batch size')
     parser.add_option('-l', '--learning-rate', dest='lr', default=0.01,
                       type='float', help='learning rate')
@@ -199,6 +201,7 @@ if __name__ == '__main__':
     args = get_args()
 
     model = CamNet()
+    model = loadPretrain(model)
 
     if args.load:
         model.load(args.load)
@@ -213,10 +216,10 @@ if __name__ == '__main__':
 
     try:
         train_model(model=model,
-                  epochs=args.epochs,
-                  batch_size=args.batchsize,
-                  lr=args.lr,
-                  gpu=args.gpu,)
+                    epochs=args.epochs,
+                    batch_size=args.batchsize,
+                    lr=args.lr,
+                    gpu=args.gpu,)
     except KeyboardInterrupt:
         torch.save(model.state_dict(), 'INTERRUPTED.pth')
         print('Saved interrupt')

@@ -105,7 +105,8 @@ venv.bak/
 .DS_Store
 .idea/HandNet.iml
 *.xml
-*.jpg
 *.pkl
 *.zip
 *.pth
+*.lan
+*.jpg

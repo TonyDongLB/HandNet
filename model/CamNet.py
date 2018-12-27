@@ -8,13 +8,16 @@ from model.modules import *
 from torchvision.models import ResNet
 from collections import OrderedDict
 
+# 参考论文《Convolutional Two-Stream Network Fusion for Video Action Recognition》与
+#     《Beyond Short Snippets: Deep Networks for Video Classification》
 
 class CamNet(nn.Module):
     """
     基于SE_ResNet50结构，去掉的maxpool和全连接层，增加了fusion模块。
+    注：GitHub上的SENET有权重文件有问题，换回标准的ResNet
     注意在特征提取阶段，对img的特征提取反向传播两次，注意学习率。
     """
-    def __init__(self, block=SEBottleneck, layers=(3, 4, 6, 3), pretrained=False):
+    def __init__(self, block=Bottleneck, layers=(3, 4, 6, 3), pretrained=False):
         super(CamNet, self).__init__()
 
         self.img_inplanes = 64
@@ -42,14 +45,20 @@ class CamNet(nn.Module):
             self._make_layer(block, 256, layers[2], stride=2, img_path=False),
         )
 
-        self.fusion4img = nn.Sequential(
-            nn.Conv2d(256 * block.expansion * 2, 256 * block.expansion, kernel_size=1, bias=False),
-            nn.Conv2d(256 * block.expansion, 256 * block.expansion, kernel_size=3, padding=1, bias=False),
-        )
         self.fusion4flow = nn.Sequential(
-            nn.Conv2d(256 * block.expansion * 2, 256 * block.expansion, kernel_size=1, bias=False),
+            nn.Conv3d(256 * block.expansion, 256 * block.expansion, kernel_size=(3, 3, 3), padding=(1, 1, 1), bias=False),
+            nn.Conv3d(256 * block.expansion, 256 * block.expansion, kernel_size=(3, 3, 3), padding=(1, 1, 1), bias=False),
+        )
+
+        self.reductionBy2 = nn.Sequential(
+            nn.Conv2d(256 * block.expansion * 2, 256 * block.expansion, kernel_size=1, padding=0, bias=False)
+        )
+
+        self.fusion4img = nn.Sequential(
+            nn.Conv2d(256 * block.expansion * 2, 256 * block.expansion, kernel_size=3, padding=1, bias=False),
             nn.Conv2d(256 * block.expansion, 256 * block.expansion, kernel_size=3, padding=1, bias=False),
         )
+
         self.layer4fusion = self._make_layer(block, 512, layers[3], stride=2, img_path=True)
         self.layer4flow = self._make_layer(block, 512, layers[3], stride=2, img_path=False)
 
@@ -107,14 +116,25 @@ class CamNet(nn.Module):
 
         return nn.Sequential(*layers)
 
-    def forward(self, img1, img2, flow):
+    def forward(self, img1, flow0, flow1):
         img1_fea = self.img_feature(img1)
-        img2_fea = self.img_feature(img2)
-        flow_fea = self.flow_feature(flow)
-        img_fea = torch.cat((img1_fea, img2_fea), dim=1)
-        img_fea = self.fusion4img(img_fea)
-        fusioned_fea = torch.cat((img_fea, flow_fea), dim=1)
-        fusioned_fea = self.fusion4flow(fusioned_fea)
+        flow0_fea = self.flow_feature(flow0)
+        flow1_fea = self.flow_feature(flow1)
+        flow0_fea = torch.unsqueeze(flow0_fea, 2)
+        flow1_fea = torch.unsqueeze(flow1_fea, 2)
+        flow_fea = torch.cat((flow0_fea, flow1_fea), dim=2)
+        flow_fea = self.fusion4flow(flow_fea)
+        flow_fea = torch.split(flow_fea, 1, dim=2)
+        flow_fea = list(map(torch.squeeze, flow_fea))
+        # # 当batch_size为1时候需要补回
+        if isinstance(flow_fea, list):
+            if len(flow_fea[0].size()) < 4:
+                flow_fea[0] = torch.unsqueeze(flow_fea[0], 0)
+                flow_fea[1] = torch.unsqueeze(flow_fea[1], 0)
+        flow_fea = torch.cat((flow_fea[0], flow_fea[1]), dim=1)
+        flow_fea = self.reductionBy2(flow_fea)
+        fusioned_fea = torch.cat((img1_fea, flow_fea), dim=1)
+        fusioned_fea = self.fusion4img(fusioned_fea)
         fusioned_fea = self.layer4fusion(fusioned_fea)
         flow_fea = self.layer4flow(flow_fea)
 
